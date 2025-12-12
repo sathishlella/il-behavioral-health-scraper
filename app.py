@@ -5,6 +5,10 @@ import subprocess
 import sys
 from datetime import datetime
 import os
+from outreach_tracker import (
+    get_status, update_status, get_pipeline_summary, 
+    VALID_STATUSES, add_note
+)
 
 CSV_CLINICS = "il_behavioral_health_clinics.csv"
 CSV_DOCTORS = "il_behavioral_health_doctors.csv"
@@ -186,7 +190,24 @@ def main():
             doctors_modified = datetime.fromtimestamp(os.path.getmtime(CSV_DOCTORS))
             st.caption(f"**Doctors:** Last updated {doctors_modified.strftime('%Y-%m-%d %H:%M')}")
         else:
-            st.caption("**Doctors:** No data yet")
+            st.caption(f"**Doctors:** No data yet")
+        
+        st.markdown("---")
+        
+        # Pipeline Summary
+        st.markdown("### 📈 Sales Pipeline")
+        try:
+            pipeline = get_pipeline_summary()
+            st.metric("Active Pipeline", pipeline["active_pipeline"])
+            
+            with st.expander("Pipeline Details"):
+                st.write(f"**Total Tracked:** {pipeline['total']}")
+                st.write(f"**Contacted:** {pipeline['Contacted']}")
+                st.write(f"**Meetings:** {pipeline['Meeting Scheduled']}")
+                st.write(f"**Proposals:** {pipeline['Proposal Sent']}")
+                st.write(f"**Won:** {pipeline['Won']}")
+        except Exception as e:
+            st.caption("No tracking data yet")
         
         st.markdown("---")
     
@@ -302,29 +323,100 @@ def main():
                         with cols[idx % 4]:
                             st.metric(ptype, f"{count:,}")
             
-            # Data table
+            # Data table with status tracking
             st.subheader("🗂️ Clinic List")
             
-            display_cols = ["clinic_name", "practice_type", "target_priority", "city", "state",
-                           "phone", "website", "email", "clinic_size", "billing_prediction"]
-            display_cols = [c for c in display_cols if c in filtered.columns]
+            # Add status tracking columns
+            display_df = filtered.copy()
             
-            # Format for display
-            display_df = filtered[display_cols].copy()
+            # Add outreach status if available
+            if 'npi' in display_df.columns:
+                display_df['outreach_status'] = display_df['npi'].apply(
+                    lambda npi: get_status(npi)['status'] if get_status(npi) else "Not Contacted"
+                )
+            
+            # Select columns to display
+            display_cols = ["clinic_name", "practice_type", "city", "state", "phone"]
+            
+            # Add revenue columns if they exist
+            if "est_monthly_revenue" in display_df.columns:
+                display_cols.append("est_monthly_revenue")
+            if "est_annual_value" in display_df.columns:
+                display_cols.append("est_annual_value")
+            
+            # Add other important columns
+            display_cols.extend(["clinic_size", "billing_prediction"])
+            
+            if 'outreach_status' in display_df.columns:
+                display_cols.append("outreach_status")
+            
+            # Keep only available columns
+            display_cols = [c for c in display_cols if c in display_df.columns]
+            
+            # Format revenue columns for display
+            if "est_monthly_revenue" in display_df.columns:
+                display_df["est_monthly_revenue"] = display_df["est_monthly_revenue"].apply(
+                    lambda x: f"${float(x):,.0f}/mo" if pd.notna(x) else "$0"
+                )
+            if "est_annual_value" in display_df.columns:
+                display_df["est_annual_value"] = display_df["est_annual_value"].apply(
+                    lambda x: f"${float(x):,.0f}/yr" if pd.notna(x) else "$0"
+                )
             
             st.dataframe(
-                display_df,
+                display_df[display_cols],
                 use_container_width=True,
                 height=500,
                 hide_index=True,
                 column_config={
                     "clinic_name": st.column_config.TextColumn("Clinic Name", width="large"),
                     "practice_type": st.column_config.TextColumn("Practice Type", width="medium"),
-                    "target_priority": st.column_config.TextColumn("Priority", width="small"),
                     "city": st.column_config.TextColumn("City", width="medium"),
                     "state": st.column_config.TextColumn("State", width="small"),
+                    "est_monthly_revenue": st.column_config.TextColumn("Monthly RCM", width="small"),
+                    "est_annual_value": st.column_config.TextColumn("Annual Value", width="small"),
+                    "outreach_status": st.column_config.TextColumn("Status", width="medium"),
                 }
             )
+            
+            # Status Update Section
+            st.markdown("### 📝 Update Outreach Status")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                selected_npi = st.selectbox(
+                    "Select Clinic (by NPI)",
+                    options=filtered['npi'].tolist() if 'npi' in filtered.columns else [],
+                    format_func=lambda npi: f"{filtered[filtered['npi']==npi]['clinic_name'].iloc[0][:30]}..." if npi else ""
+                )
+            
+            with col2:
+                new_status = st.selectbox("New Status", options=VALID_STATUSES)
+            
+            with col3:
+                contact_date = st.date_input("Contact Date", value=datetime.now())
+            
+            with col4:
+                if st.button("Update Status", type="primary"):
+                    if selected_npi:
+                        success = update_status(
+                            selected_npi,
+                            new_status,
+                            f"Updated via dashboard on {datetime.now().strftime('%Y-%m-%d')}",
+                            contact_date.strftime("%Y-%m-%d")
+                        )
+                        if success:
+                            st.success(f"✅ Updated to: {new_status}")
+                            st.rerun()
+                        else:
+                            st.error("Failed to update")
+            
+            # Notes section
+            notes_input = st.text_area("Add Notes (optional)", placeholder="e.g., Spoke with Jane, sending proposal...")
+            if st.button("Add Note") and selected_npi and notes_input:
+                if add_note(selected_npi, notes_input):
+                    st.success("✅ Note added")
+                    st.rerun()
             
             # Download
             csv = filtered.to_csv(index=False)
