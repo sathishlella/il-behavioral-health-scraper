@@ -15,8 +15,8 @@ import time
 
 NPI_URL = "https://npiregistry.cms.hhs.gov/api/"
 
-# States to scrape (add more as needed)
-STATES = ["IL", "FL", "MI"]
+# States to scrape - CURRENTLY FOCUSED ON ILLINOIS ONLY
+STATES = ["IL"]  # Change this to add more states: ["IL", "FL", "MI"]
 
 # Comprehensive search terms for maximum coverage
 SEARCH_TERMS = [

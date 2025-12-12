@@ -149,12 +149,13 @@ def extract_doctor(r):
 print("\n" + "=" * 80)
 print("ILLINOIS BEHAVIORAL HEALTH INDIVIDUAL DOCTORS SCRAPER")
 print("=" * 80)
-print("\nSearching for individual practitioners...\n")
+print("\nSearching for individual practitioners in Illinois...\n")
 
 all_results = []
 npi_set = set()
 
-# Search by specialty
+# Search by specialty - ILLINOIS ONLY
+STATE = "IL"
 specialties = [
     "psychiatry",
     "psychology", 
@@ -166,7 +167,7 @@ specialties = [
 
 for specialty in specialties:
     print(f"Specialty: '{specialty}'...", end=" ")
-    data = fetch("IL", specialty)
+    data = fetch(STATE, specialty)
     count = data.get("result_count", 0)
     print(f"{count} results")
     
@@ -180,7 +181,7 @@ for specialty in specialties:
     if count > 200:
         for p in range(1, min(5, count // 200 + 1)):
             print(f"  Page {p+1}...", end=" ")
-            data = fetch("IL", specialty, skip=p*200)
+            data = fetch(STATE, specialty, skip=p*200)
             print(f"{len(data.get('results', []))} records")
             
             for r in data.get("results", []):
