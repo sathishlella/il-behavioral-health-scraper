@@ -204,30 +204,61 @@ def main():
             # Filters
             st.subheader("🔍 Filters")
             
+            col1, col2, col3, col4, col5 = st.columns(5)
+            
+            with col1:
+                # State filter
+                all_states = sorted(df_clinics["state"].dropna().unique().tolist())
+                selected_states = st.multiselect("State", options=all_states, default=all_states)
+            
+            with col2:
+                # Practice Type filter
+                all_types = sorted(df_clinics["practice_type"].dropna().unique().tolist())
+                selected_types = st.multiselect("Practice Type", options=all_types, default=[])
+            
+            with col3:
+                # Target Priority filter
+                priority_options = ["All", "Current Targets", "Future Prospects"]
+                selected_priority = st.selectbox("Target Priority", options=priority_options, index=0)
+            
+            with col4:
+                # Clinic Size filter
+                size_options = ["All"] + sorted(df_clinics["clinic_size"].unique().tolist())
+                selected_size = st.selectbox("Clinic Size", options=size_options, index=0)
+           
+            with col5:
+                # Billing Prediction filter
+                billing_options = ["All", "High", "Medium", "Low"]
+                selected_billing = st.selectbox("Billing Need", options=billing_options, index=0)
+            
+            # Second row of filters
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
+                # City filter
                 all_cities = sorted(df_clinics["city"].dropna().unique().tolist())
                 selected_cities = st.multiselect("City", options=all_cities, default=[])
             
             with col2:
-                size_options = ["All"] + sorted(df_clinics["clinic_size"].unique().tolist())
-                selected_size = st.selectbox("Clinic Size", options=size_options, index=0)
+                has_website = st.checkbox("Has Website")
             
             with col3:
-                billing_options = ["All", "High", "Medium", "Low"]
-                selected_billing = st.selectbox("Billing Need", options=billing_options, index=0)
-            
-            with col4:
-                has_website = st.checkbox("Has Website")
                 has_email = st.checkbox("Has Email")
             
-            # Search
-            search_term = st.text_input("🔎 Search clinic name", "")
+            with col4:
+                search_term = st.text_input("🔎 Search name", "")
             
             # Apply filters
             filtered = df_clinics.copy()
             
+            if selected_states:
+                filtered = filtered[filtered["state"].isin(selected_states)]
+            if selected_types:
+                filtered = filtered[filtered["practice_type"].isin(selected_types)]
+            if selected_priority == "Current Targets":
+                filtered = filtered[filtered["target_priority"] == "Current"]
+            elif selected_priority == "Future Prospects":
+                filtered = filtered[filtered["target_priority"] == "Future"]
             if selected_cities:
                 filtered = filtered[filtered["city"].isin(selected_cities)]
             if selected_size != "All":
@@ -243,37 +274,62 @@ def main():
             
             # Summary
             st.subheader("📊 Summary")
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2, col3, col4, col5 = st.columns(5)
             
             with col1:
-                st.metric("Total Clinics", len(df_clinics))
+                st.metric("Total Clinics", f"{len(df_clinics):,}")
             with col2:
-                st.metric("Filtered Results", len(filtered))
+                st.metric("Filtered Results", f"{len(filtered):,}")
             with col3:
-                high_priority = (df_clinics["billing_prediction"] == "High").sum()
-                st.metric("High Priority", high_priority)
+                current = (df_clinics["target_priority"] == "Current").sum()
+                st.metric("Current Targets", f"{current:,}")
             with col4:
-                with_contact = (df_clinics["email"].str.len() > 0).sum()
-                st.metric("With Email", with_contact)
+                high_priority = (df_clinics["billing_prediction"] == "High").sum()
+                st.metric("High Priority", f"{high_priority:,}")
+            with col5:
+                states_count = df_clinics["state"].nunique()
+                st.metric("States", states_count)
+            
+            # Practice Type Breakdown (for Current targets)
+            if "target_priority" in df_clinics.columns:
+                current_targets = df_clinics[df_clinics["target_priority"] == "Current"]
+                if not current_targets.empty:
+                    st.markdown("### 🎯 Current Target Breakdown")
+                    type_breakdown = current_targets["practice_type"].value_counts().head(8)
+                    
+                    cols = st.columns(4)
+                    for idx, (ptype, count) in enumerate(type_breakdown.items()):
+                        with cols[idx % 4]:
+                            st.metric(ptype, f"{count:,}")
             
             # Data table
             st.subheader("🗂️ Clinic List")
             
-            display_cols = ["clinic_name", "city", "practice_type", "phone", "website", 
-                           "email", "clinic_size", "billing_prediction"]
+            display_cols = ["clinic_name", "practice_type", "target_priority", "city", "state",
+                           "phone", "website", "email", "clinic_size", "billing_prediction"]
             display_cols = [c for c in display_cols if c in filtered.columns]
             
+            # Format for display
+            display_df = filtered[display_cols].copy()
+            
             st.dataframe(
-                filtered[display_cols],
+                display_df,
                 use_container_width=True,
                 height=500,
-                hide_index=True
+                hide_index=True,
+                column_config={
+                    "clinic_name": st.column_config.TextColumn("Clinic Name", width="large"),
+                    "practice_type": st.column_config.TextColumn("Practice Type", width="medium"),
+                    "target_priority": st.column_config.TextColumn("Priority", width="small"),
+                    "city": st.column_config.TextColumn("City", width="medium"),
+                    "state": st.column_config.TextColumn("State", width="small"),
+                }
             )
             
             # Download
             csv = filtered.to_csv(index=False)
             st.download_button(
-                label="⬇️ Download Filtered Data",
+                label=f"⬇️ Download Filtered Data ({len(filtered):,} clinics)",
                 data=csv,
                 file_name=f"clinics_filtered_{datetime.now().strftime('%Y%m%d')}.csv",
                 mime="text/csv"

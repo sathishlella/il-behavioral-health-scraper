@@ -1,6 +1,11 @@
 """
-Final Scraper - Using Taxonomy Codes + Broader Search
-This gets ALL providers (individuals + orgs) with behavioral health taxonomies
+Enhanced Multi-State Behavioral Health Clinic Scraper
+Features:
+- Multi-state support (IL, FL, MI, and more)
+- 15+ targeted search terms
+- Practice type classification
+- Current vs Future prospect categorization
+- Expanded data collection
 """
 
 import requests
@@ -10,160 +15,348 @@ import time
 
 NPI_URL = "https://npiregistry.cms.hhs.gov/api/"
 
-# Mental health taxonomy codes
-TAXONOMIES = [
-    "261QM0801X",  # Mental Health Clinic
-   "261QM0850X",  # Adolescent Mental Health  
-    "261QP0904X",  # Psychiatry Clinic
-    "251S00000X",  # Behavioral Health
+# States to scrape (add more as needed)
+STATES = ["IL", "FL", "MI"]
+
+# Comprehensive search terms for maximum coverage
+SEARCH_TERMS = [
+    # Core mental health
+    "mental health clinic",
+    "mental health center",
+    "behavioral health",
+    "behavioral health clinic",
+    
+    # Therapy focused
+    "therapy center",
+    "therapy clinic",
+    "therapist",
+    "psychotherapy",
+    
+    # Counseling focused
+    "counseling center",
+    "counseling services",
+    "counselor",
+    "family counseling",
+    "marriage therapy",
+    
+    # Psychology/Psychiatry
+    "psychology",
+    "psychologist",
+    "psychiatry",
+    "psychiatric",
+    
+    # Specialized
+    "trauma therapy",
+    "child therapy",
+    "adolescent mental health",
+    "substance abuse counseling",
+    "addiction counseling",
 ]
 
-def fetch(state, taxonomy, skip=0):
+def fetch(state, search_term, skip=0):
+    """Fetch NPI data for a state and search term."""
     params = {
         "version": "2.1",
         "state": state,
-        "taxonomy_description": taxonomy,
+        "taxonomy_description": search_term,
         "limit": 200,
         "skip": skip
     }
     try:
         r = requests.get(NPI_URL, params=params, timeout=30)
         return r.json()
-    except:
+    except Exception as e:
+        print(f" Error: {e}")
         return {"result_count": 0, "results": []}
 
+def classify_practice_type(name, taxonomies):
+    """Classify practice into specific type and priority."""
+    name_lower = name.lower()
+    tax_str = " ".join([t.get("desc", "") or "" for t in taxonomies]).lower()
+    
+    # FUTURE PROSPECTS (not current focus)
+    if "neurology" in tax_str or "neurolog" in name_lower:
+        if "psychiatr" not in tax_str:  # Avoid psychiatry/neurology overlap
+            return "Neurology Practice", "Future"
+    
+    if "orthopedic" in tax_str or "orthopaedic" in tax_str or "ortho" in name_lower:
+        return "Orthopedic Clinic", "Future"
+    
+    if "pain management" in tax_str or "pain mgmt" in name_lower:
+        return "Pain Management", "Future"
+    
+    if "physical therapy" in tax_str or "physical therap" in name_lower:
+        return "Physical Therapy", "Future"
+    
+    # CURRENT TARGETS (your focus)
+    if "psychiatr" in tax_str:
+        return "Psychiatry Practice", "Current"
+    
+    if "psycholog" in tax_str:
+        return "Psychology Practice", "Current"
+    
+    if "counselor" in tax_str or "counseling" in name_lower or "counsel" in name_lower:
+        return "Counseling Center", "Current"
+    
+    if ("therap" in name_lower or "therapy" in tax_str) and "physical" not in name_lower:
+        return "Therapy Center", "Current"
+    
+    if "substance" in tax_str or "addiction" in tax_str:
+        return "Substance Abuse Treatment", "Current"
+    
+    # Default to mental health clinic
+    return "Mental Health Clinic", "Current"
+
+def determine_size(org_name):
+    """Determine clinic size from name."""
+    name = org_name.lower()
+    
+    if any(w in name for w in ["group", "associates", "partners", " & ", " and "]):
+        return "Small Group"
+    if "center" in name or "clinic" in name:
+        return "Small Group"
+    if any(w in name for w in [" llc", " inc", " pllc", " pc"]):
+        return "Solo or Small"
+    
+    return "Unknown"
+
+def predict_billing(org_name, practice_type, size):
+    """Predict billing service need."""
+    score = 0
+    
+    # Size factor
+    if size == "Small Group":
+        score += 3
+    elif "Solo" in size:
+        score += 2
+    
+    # Practice type factor
+    pt_lower = practice_type.lower()
+    if "psychiatr" in pt_lower:
+        score += 2
+    if "substance" in pt_lower or "addiction" in pt_lower:
+        score += 2
+    if "counselor" in pt_lower or "therapy" in pt_lower:
+        score += 1
+    
+    # Name indicators
+    name_lower = org_name.lower()
+    if any(w in name_lower for w in [" llc", " inc", " pllc"]):
+        score += 1
+    
+    # Final prediction
+    if score >= 4:
+        return "High"
+    elif score >= 2:
+        return "Medium"
+    return "Low"
+
 def clean_url(name):
+    """Create clean URL from clinic name."""
     if not name:
         return ""
     n = re.sub(r'[^\w\s]', '', name.lower())
-    n = n.replace(" llc", "").replace(" inc", "").strip().replace(" ", "")
+    n = n.replace(" llc", "").replace(" inc", "").replace(" pllc", "").replace(" pc", "")
+    n = n.strip().replace(" ", "")
     return n if len(n) > 2 else ""
 
-def extract(r):
-    basic = r.get("basic", {})
-    name = basic.get("organization_name", "")
+def extract_clinic(result, state):
+    """Extract clinic data from NPI result."""
+    basic = result.get("basic", {})
+    org_name = basic.get("organization_name", "")
     
-    # Skip individuals without org name
-    if not name:
+    if not org_name:
         return None
     
-    # Skip large systems
-    nl = name.lower()
-    if any(k in nl for k in ["hospital", "health system", "university", "state", "federal", "department", "county"]):
+    # Filter out large systems
+    name_lower = org_name.lower()
+    exclude_keywords = [
+        "hospital", "health system", "university", "medical center",
+        "department of", "state of", "federal", "government",
+        "county health", "public health department"
+    ]
+    if any(k in name_lower for k in exclude_keywords):
         return None
     
-    addrs = r.get("addresses", [])
+    # Get address
+    addrs = result.get("addresses", [])
     addr = next((a for a in addrs if a.get("address_purpose") == "LOCATION"), addrs[0] if addrs else None)
     
     if not addr:
         return None
     
-    taxs = r.get("taxonomies", [])
-    practice = "; ".join([t.get("desc", "") for t in taxs[:2]])
+    # Verify state matches
+    if addr.get("state", "") != state:
+        return None
     
-    # Size
-    if any(w in nl for w in ["group", "associates", "partners", "&", "center", "clinic"]):
-        size = "Small Group"
-        billing = "High"
-    else:
-        size = "Solo or Small"
-        billing = "Medium"
+    # Get taxonomies
+    taxs = result.get("taxonomies", [])
+    tax_descs = [t.get("desc", "") for t in taxs if t.get("desc")]
     
-    clean_n = clean_url(name)
+    # Classify practice
+    practice_type, target_priority = classify_practice_type(org_name, taxs)
+    
+    # Determine size and billing
+    size = determine_size(org_name)
+    billing = predict_billing(org_name, practice_type, size)
+    
+    # Infer website/email
+    clean_n = clean_url(org_name)
+    website = f"www.{clean_n}.com" if clean_n else ""
+    email = f"contact@{clean_n}.com" if clean_n else ""
+    
+    # Format phone
+    phone = addr.get("telephone_number", "")
+    if phone:
+        d = re.sub(r'\D', '', phone)
+        if len(d) == 10:
+            phone = f"({d[:3]}) {d[3:6]}-{d[6:]}"
     
     return {
-        "clinic_name": name,
-        "practice_type": practice or "Behavioral Health",
+        "clinic_name": org_name,
+        "practice_type": practice_type,
+        "target_priority": target_priority,
+        "taxonomy_description": "; ".join(tax_descs[:2]) if tax_descs else "",
         "address": (addr.get("address_1", "") + " " + addr.get("address_2", "")).strip(),
         "city": addr.get("city", ""),
         "state": addr.get("state", ""),
         "postal_code": (addr.get("postal_code", "") or "")[:5],
-        "phone": re.sub(r'(\d{3})(\d{3})(\d{4})', r'(\1) \2-\3', re.sub(r'\D', '', addr.get("telephone_number", ""))),
-        "website": f"www.{clean_n}.com" if clean_n else "",
-        "email": f"contact@{clean_n}.com" if clean_n else "",
+        "phone": phone,
+        "website": website,
+        "email": email,
         "clinic_size": size,
         "billing_prediction": billing,
-        "npi": r.get("number", "")
+        "npi": result.get("number", "")
     }
 
-print("\n" + "=" * 80)
-print("ILLINOIS BEHAVIORAL HEALTH CLINIC SCRAPER")
-print("=" * 80)
-print("\nSearching by Mental Health Taxonomy Codes...\n")
+print("\n" + "=" * 90)
+print("  ENHANCED MULTI-STATE BEHAVIORAL HEALTH CLINIC SCRAPER")
+print("=" * 90)
+print(f"\nSearching states: {', '.join(STATES)}")
+print(f"Search terms: {len(SEARCH_TERMS)}")
+print(f"Expected results: 5,000-10,000+ clinics\n")
+print("=" * 90)
 
 all_results = []
 npi_set = set()
+state_counts = {state: 0 for state in STATES}
 
-# Search by taxonomy descriptions
-tax_searches = ["mental health", "behavioral health", "psychiatry", "psychology", "counseling"]
-
-for tax in tax_searches:
-    print(f"Taxonomy: '{tax}'...", end=" ")
-    data = fetch("IL", tax)
-    count = data.get("result_count", 0)
-    print(f"{count} results")
+for state in STATES:
+    print(f"\n📍 STATE: {state}")
+    print("-" * 90)
     
-    for r in data.get("results", []):
-        npi = r.get("number")
-        if npi and npi not in npi_set:
-            all_results.append(r)
-            npi_set.add(npi)
-    
-    # Get more pages
-    if count > 200:
-        for p in range(1, min(10, count // 200 + 1)):
-            print(f"  Page {p+1}...", end=" ")
-            data = fetch("IL", tax, skip=p*200)
-            print(f"{len(data.get('results', []))} records")
+    for term in SEARCH_TERMS:
+        print(f"  '{term}'... ", end="", flush=True)
+        
+        data = fetch(state, term)
+        count = data.get("result_count", 0)
+        print(f"{count:,} found", end="")
+        
+        # Get first page
+        for r in data.get("results", []):
+            npi = r.get("number")
+            if npi and npi not in npi_set:
+                all_results.append((r, state))
+                npi_set.add(npi)
+                state_counts[state] += 1
+        
+        # Get additional pages (max 25 pages = 5,000 records)
+        if count > 200:
+            max_pages = min(25, (count // 200) + 1)
+            fetched_pages = 1
             
-            for r in data.get("results", []):
-                npi = r.get("number")
-                if npi and npi not in npi_set:
-                    all_results.append(r)
-                    npi_set.add(npi)
-            time.sleep(0.3)
+            for p in range(1, max_pages):
+                data = fetch(state, term, skip=p * 200)
+                results = data.get("results", [])
+                
+                for r in results:
+                    npi = r.get("number")
+                    if npi and npi not in npi_set:
+                        all_results.append((r, state))
+                        npi_set.add(npi)
+                        state_counts[state] += 1
+                
+                fetched_pages += 1
+                time.sleep(0.2)
+            
+            print(f" → {fetched_pages} pages")
+        else:
+            print()
 
-print(f"\n✅ Total unique records: {len(all_results)}")
-print(f"\nFiltering and extracting...\n")
+print("\n" + "=" * 90)
+print(f"✅ Total unique NPIs collected: {len(all_results):,}")
+print("\nBy State:")
+for state, count in state_counts.items():
+    print(f"  {state}: {count:,}")
+print("=" * 90)
+
+print("\n🔄 Processing and filtering...\n")
 
 clinics = []
-for r in all_results:
-    clinic = extract(r)
+skipped = 0
+
+for i, (result, state) in enumerate(all_results):
+    clinic = extract_clinic(result, state)
     if clinic:
         clinics.append(clinic)
-        if len(clinics) % 100 == 0:
-            print(f"  ✓ {len(clinics)} extracted...")
+        if len(clinics) % 500 == 0:
+            print(f"  ✓ {len(clinics):,} valid clinics extracted...")
+    else:
+        skipped += 1
 
-print(f"\n✅ {len(clinics)} valid clinics\n")
+print(f"\n✅ {len(clinics):,} valid clinics extracted")
+print(f"⏭️  {skipped:,} filtered out (large systems, missing data, etc.)")
 
 if clinics:
-    df = pd.DataFrame(clinics).sort_values(by=["city", "clinic_name"])
+    df = pd.DataFrame(clinics)
+    df = df.sort_values(by=["state", "city", "clinic_name"])
     
     output = "il_behavioral_health_clinics.csv"
     df.to_csv(output, index=False)
     
-    print("=" * 80)
-    print(f"✅ SUCCESS! {len(df)} clinics saved to: {output}")
-    print("=" * 80)
+    print("\n" + "=" * 90)
+    print(f"✅ SUCCESS! {len(df):,} clinics saved to: {output}")
+    print("=" * 90)
     
+    # Statistics
     print(f"\n📊 STATISTICS:\n")
-    print(f"Total: {len(df)} | Cities: {df['city'].nunique()}\n")
     
-    print("Top 15 Cities:")
-    for i, (c, n) in enumerate(df['city'].value_counts().head(15).items(), 1):
-        print(f"  {i:2}. {c:20} {n:3}")
+    print("By State:")
+    for state, count in df['state'].value_counts().items():
+        print(f"  {state}: {count:,}")
     
-    print(f"\nSizes:")
-    for s, n in df['clinic_size'].value_counts().items():
-        print(f"  • {s:15} {n}")
+    print(f"\nBy Practice Type:")
+    for ptype, count in df['practice_type'].value_counts().head(10).items():
+        print(f"  • {ptype:35} {count:,}")
     
-    print(f"\nBilling:")
-    for b, n in df['billing_prediction'].value_counts().items():
-        print(f"  • {b:15} {n}")
+    print(f"\nBy Target Priority:")
+    for priority, count in df['target_priority'].value_counts().items():
+        print(f"  • {priority:15} {count:,}")
     
-    print(f"\n🎯 {(df['billing_prediction']=='High').sum()} HIGH priority clinics for outreach!\n")
-    print("=" * 80)
-    print("✅ Run dashboard: streamlit run app.py")
-    print("=" * 80 + "\n")
+    print(f"\nBy Clinic Size:")
+    for size, count in df['clinic_size'].value_counts().items():
+        print(f"  • {size:20} {count:,}")
+    
+    print(f"\nBy Billing Prediction:")
+    for billing, count in df['billing_prediction'].value_counts().items():
+        print(f"  • {billing:15} {count:,}")
+    
+    # Current targets only
+    current_targets = df[df['target_priority'] == 'Current']
+    high_priority = (current_targets['billing_prediction'] == 'High').sum()
+    
+    print(f"\n🎯 CURRENT TARGETS: {len(current_targets):,} clinics")
+    print(f"   High Priority: {high_priority:,}")
+    print(f"\n📅 FUTURE PROSPECTS: {(df['target_priority']=='Future').sum():,} clinics")
+    
+    print("\n" + "=" * 90)
+    print("NEXT STEPS:")
+    print("  1. Run dashboard: streamlit run app.py")
+    print("  2. Filter by: Target Priority = 'Current'")
+    print("  3. Filter by: Practice Type (Counseling, Therapy, etc.)")
+    print("  4. Filter by: Billing Prediction = 'High'")
+    print("  5. Export filtered list for outreach!")
+    print("=" * 90 + "\n")
+    
 else:
-    print("⚠️ No clinics found\n")
+    print("\n⚠️ No clinics found\n")
