@@ -12,6 +12,7 @@ import requests
 import pandas as pd
 import re
 import time
+from revenue_estimator import calculate_revenue, format_revenue_display
 
 NPI_URL = "https://npiregistry.cms.hhs.gov/api/"
 
@@ -212,6 +213,9 @@ def extract_clinic(result, state):
         if len(d) == 10:
             phone = f"({d[:3]}) {d[3:6]}-{d[6:]}"
     
+    # Calculate revenue estimates
+    revenue_data = calculate_revenue(practice_type, size)
+    
     return {
         "clinic_name": org_name,
         "practice_type": practice_type,
@@ -226,6 +230,10 @@ def extract_clinic(result, state):
         "email": email,
         "clinic_size": size,
         "billing_prediction": billing,
+        "est_monthly_collections": revenue_data["monthly_collections"],
+        "est_monthly_revenue": revenue_data["rcm_revenue_estimate"],
+        "est_revenue_range": f"${revenue_data['rcm_revenue_min']:.0f}-${revenue_data['rcm_revenue_max']:.0f}",
+        "est_annual_value": round(revenue_data["rcm_revenue_estimate"] * 12, 2),
         "npi": result.get("number", "")
     }
 

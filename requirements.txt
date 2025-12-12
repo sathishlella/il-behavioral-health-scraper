@@ -1,6 +1,7 @@
 requests
 pandas
 streamlit
+dnspython
 beautifulsoup4
 validators
 lxml
