@@ -1,19 +1,26 @@
-# app.py - Enhanced Dashboard for IL Behavioral Health Clinics
+# app.py - Enhanced Dashboard with Data Refresh Capabilities
 import pandas as pd
 import streamlit as st
+import subprocess
+import sys
+from datetime import datetime
+import os
 
-CSV_PATH = "il_behavioral_health_clinics.csv"
+CSV_CLINICS = "il_behavioral_health_clinics.csv"
+CSV_DOCTORS = "il_behavioral_health_doctors.csv"
 
 st.set_page_config(
-    page_title="Velden – IL Behavioral Health Clinic Pipeline",
+    page_title="Velden – IL Behavioral Health Pipeline",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 @st.cache_data
 def load_data(path: str) -> pd.DataFrame:
-    """Load clinic data from CSV."""
+    """Load clinic/doctor data from CSV."""
     try:
+        if not os.path.exists(path):
+            return None
         df = pd.read_csv(path, dtype=str)
         # Convert numeric columns
         if "provider_count" in df.columns:
@@ -21,240 +28,275 @@ def load_data(path: str) -> pd.DataFrame:
         if "billing_score" in df.columns:
             df["billing_score"] = pd.to_numeric(df["billing_score"], errors="coerce").fillna(0)
         return df
-    except FileNotFoundError:
+    except Exception as e:
+        st.error(f"Error loading {path}: {e}")
         return None
 
 
-def main():
-    st.title("🏥 Velden Health – Illinois Behavioral Health Clinic Pipeline")
-    st.markdown("**Small Outpatient Clinics for Medical Billing Outreach**")
-
-    # Load data
-    df = load_data(CSV_PATH)
+def run_scraper(script_name: str, description: str):
+    """Run a scraper script and show progress."""
+    progress_placeholder = st.empty()
+    status_placeholder = st.empty()
     
-    if df is None:
-        st.error(f"❌ CSV not found: `{CSV_PATH}`")
-        st.info("👉 Run `scrape_npi_enhanced.py` first to generate clinic data.")
-        st.code("python scrape_npi_enhanced.py", language="bash")
-        st.stop()
-
-    # Sidebar Filters
-    st.sidebar.header("🔍 Filters")
-
-    # City filter
-    all_cities = sorted(df["city"].dropna().unique().tolist())
-    selected_cities = st.sidebar.multiselect(
-        "City", 
-        options=all_cities, 
-        default=[],
-        help="Filter by city"
-    )
-
-    # Clinic size filter
-    size_options = ["All"] + sorted(df["clinic_size"].unique().tolist())
-    selected_size = st.sidebar.selectbox(
-        "Clinic Size",
-        options=size_options,
-        index=0,
-        help="Solo, Small Group, Medium, or Large"
-    )
-
-    # Billing prediction filter
-    billing_options = ["All", "High", "Medium", "Low"]
-    selected_billing = st.sidebar.selectbox(
-        "Billing Prediction",
-        options=billing_options,
-        index=0,
-        help="Likelihood they need medical billing services"
-    )
-
-    # Data availability filters
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Data Availability")
-    has_website = st.sidebar.checkbox("Has Website", value=False)
-    has_email = st.sidebar.checkbox("Has Email", value=False)
-
-    # Search by name
-    st.sidebar.markdown("---")
-    search_term = st.sidebar.text_input(
-        "🔎 Search Clinic Name",
-        "",
-        help="Search for clinics by name"
-    )
-
-    # Apply filters
-    filtered = df.copy()
-
-    if selected_cities:
-        filtered = filtered[filtered["city"].isin(selected_cities)]
-
-    if selected_size != "All":
-        filtered = filtered[filtered["clinic_size"] == selected_size]
-
-    if selected_billing != "All":
-        filtered = filtered[filtered["billing_prediction"] == selected_billing]
-
-    if has_website:
-        filtered = filtered[filtered["website"].str.len() > 0]
-
-    if has_email:
-        filtered = filtered[filtered["email"].str.len() > 0]
-
-    if search_term:
-        filtered = filtered[
-            filtered["clinic_name"].str.contains(search_term, case=False, na=False)
-        ]
-
-    # Summary Metrics
-    st.subheader("📊 Summary")
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        st.metric("Total Clinics", len(df))
-    with col2:
-        st.metric("Filtered Results", len(filtered))
-    with col3:
-        high_priority = (df["billing_prediction"] == "High").sum()
-        st.metric("High Billing Priority", high_priority)
-    with col4:
-        with_website = (df["website"].str.len() > 0).sum()
-        st.metric("With Website", with_website)
-    with col5:
-        with_email = (df["email"].str.len() > 0).sum()
-        st.metric("With Email", with_email)
-
-    # Distribution Charts
-    st.markdown("---")
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.subheader("🏢 Clinic Size Distribution")
-        size_counts = filtered["clinic_size"].value_counts()
-        st.bar_chart(size_counts)
-    
-    with col2:
-        st.subheader("💼 Billing Prediction")
-        billing_counts = filtered["billing_prediction"].value_counts()
-        st.bar_chart(billing_counts)
-    
-    with col3:
-        st.subheader("🏙️ Top Cities")
-        city_counts = filtered["city"].value_counts().head(10)
-        st.bar_chart(city_counts)
-
-    # Main Data Table
-    st.markdown("---")
-    st.subheader("🗂️ Clinic Details")
-    
-    # Select columns to display
-    display_columns = [
-        "clinic_name",
-        "city",
-        "practice_type",
-        "phone",
-        "website",
-        "email",
-        "clinic_size",
-        "billing_prediction",
-        "billing_score",
-    ]
-    
-    # Filter to only existing columns
-    display_columns = [col for col in display_columns if col in filtered.columns]
-    
-    # Configure column display
-    column_config = {
-        "clinic_name": st.column_config.TextColumn("Clinic Name", width="medium"),
-        "city": st.column_config.TextColumn("City", width="small"),
-        "practice_type": st.column_config.TextColumn("Practice Type", width="large"),
-        "phone": st.column_config.TextColumn("Phone", width="small"),
-        "website": st.column_config.LinkColumn("Website", width="medium"),
-        "email": st.column_config.TextColumn("Email", width="medium"),
-        "clinic_size": st.column_config.TextColumn("Size", width="small"),
-        "billing_prediction": st.column_config.TextColumn("Billing Need", width="small"),
-        "billing_score": st.column_config.NumberColumn(
-            "Score",
-            width="small",
-            format="%.2f"
-        ),
-    }
-    
-    st.dataframe(
-        filtered[display_columns],
-        column_config=column_config,
-        use_container_width=True,
-        height=500,
-        hide_index=True
-    )
-
-    # Export functionality
-    st.markdown("---")
-    col1, col2 = st.columns([3, 1])
-    
-    with col1:
-        st.caption(f"📁 Data source: NPI Registry API + Web Enrichment | {len(filtered)} clinics shown")
-    
-    with col2:
-        # Download button for filtered data
-        csv_data = filtered.to_csv(index=False)
-        st.download_button(
-            label="⬇️ Download CSV",
-            data=csv_data,
-            file_name="filtered_clinics.csv",
-            mime="text/csv",
-        )
-
-    # Detailed view for selected clinic
-    st.markdown("---")
-    st.subheader("🔍 Clinic Detail View")
-    
-    if not filtered.empty:
-        clinic_names = filtered["clinic_name"].tolist()
-        selected_clinic = st.selectbox(
-            "Select a clinic to view details:",
-            options=clinic_names,
-            index=0
+    try:
+        progress_placeholder.info(f"🔄 Running {description}...")
+        
+        # Run the scraper
+        result = subprocess.run(
+            [sys.executable, script_name],
+            capture_output=True,
+            text=True,
+            timeout=300  # 5 minute timeout
         )
         
-        if selected_clinic:
-            clinic_data = filtered[filtered["clinic_name"] == selected_clinic].iloc[0]
+        if result.returncode == 0:
+            progress_placeholder.empty()
+            status_placeholder.success(f"✅ {description} completed successfully!")
             
-            col1, col2 = st.columns(2)
+            # Show output summary
+            with st.expander("View scraper output"):
+                st.text(result.stdout)
+            
+            # Clear cache to reload data
+            st.cache_data.clear()
+            return True
+        else:
+            progress_placeholder.empty()
+            status_placeholder.error(f"❌ {description} failed!")
+            with st.expander("View error details"):
+                st.text(result.stderr or result.stdout)
+            return False
+            
+    except subprocess.TimeoutExpired:
+        progress_placeholder.empty()
+        status_placeholder.error(f"⏱️ {description} timed out (took longer than 5 minutes)")
+        return False
+    except Exception as e:
+        progress_placeholder.empty()
+        status_placeholder.error(f"❌ Error running {description}: {str(e)}")
+        return False
+
+
+def main():
+    st.title("🏥 Velden Health – Illinois Behavioral Health Pipeline")
+    
+    # Sidebar - Data Management
+    with st.sidebar:
+        st.header("📊 Data Management")
+        
+        st.markdown("### Refresh Data")
+        st.caption("Click to fetch latest data from NPI Registry")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("🏢 Refresh Clinics", use_container_width=True):
+                with st.spinner("Fetching clinics..."):
+                    success = run_scraper("scrape_clinics.py", "Clinic scraper")
+                    if success:
+                        st.rerun()
+        
+        with col2:
+            if st.button("👨‍⚕️ Refresh Doctors", use_container_width=True):
+                with st.spinner("Fetching doctors..."):
+                    success = run_scraper("scrape_doctors.py", "Doctor scraper")
+                    if success:
+                        st.rerun()
+        
+        if st.button("🔄 Refresh Both", type="primary", use_container_width=True):
+            with st.spinner("Fetching all data..."):
+                clinics_success = run_scraper("scrape_clinics.py", "Clinic scraper")
+                doctors_success = run_scraper("scrape_doctors.py", "Doctor scraper")
+                
+                if clinics_success or doctors_success:
+                    st.rerun()
+        
+        st.markdown("---")
+        
+        # Data file info
+        st.markdown("### 📁 Current Data")
+        
+        if os.path.exists(CSV_CLINICS):
+            clinics_modified = datetime.fromtimestamp(os.path.getmtime(CSV_CLINICS))
+            st.caption(f"**Clinics:** Last updated {clinics_modified.strftime('%Y-%m-%d %H:%M')}")
+        else:
+            st.caption("**Clinics:** No data yet")
+        
+        if os.path.exists(CSV_DOCTORS):
+            doctors_modified = datetime.fromtimestamp(os.path.getmtime(CSV_DOCTORS))
+            st.caption(f"**Doctors:** Last updated {doctors_modified.strftime('%Y-%m-%d %H:%M')}")
+        else:
+            st.caption("**Doctors:** No data yet")
+        
+        st.markdown("---")
+    
+    # Main content tabs
+    tab1, tab2 = st.tabs(["🏢 Clinics/Organizations", "👨‍⚕️ Individual Doctors"])
+    
+    # ==================== CLINICS TAB ====================
+    with tab1:
+        df_clinics = load_data(CSV_CLINICS)
+        
+        if df_clinics is None or df_clinics.empty:
+            st.warning("⚠️ No clinic data found. Click 'Refresh Clinics' to fetch data.")
+            st.info("👉 Use the sidebar to refresh data from NPI Registry")
+        else:
+            # Filters
+            st.subheader("🔍 Filters")
+            
+            col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                st.markdown("**📋 Basic Information**")
-                st.write(f"**Name:** {clinic_data.get('clinic_name', 'N/A')}")
-                st.write(f"**NPI:** {clinic_data.get('npi', 'N/A')}")
-                st.write(f"**Practice Type:** {clinic_data.get('practice_type', 'N/A')}")
-                st.write(f"**Address:** {clinic_data.get('address_1', 'N/A')}")
-                if clinic_data.get('address_2'):
-                    st.write(f"**Address 2:** {clinic_data.get('address_2')}")
-                st.write(f"**City, State:** {clinic_data.get('city', 'N/A')}, {clinic_data.get('state', 'N/A')} {clinic_data.get('postal_code', '')}")
-                st.write(f"**Phone:** {clinic_data.get('phone', 'N/A')}")
+                all_cities = sorted(df_clinics["city"].dropna().unique().tolist())
+                selected_cities = st.multiselect("City", options=all_cities, default=[])
             
             with col2:
-                st.markdown("**🌐 Contact & Insights**")
-                
-                website = clinic_data.get('website', '')
-                if website:
-                    st.write(f"**Website:** [{website}]({website})")
-                else:
-                    st.write("**Website:** Not found")
-                
-                email = clinic_data.get('email', '')
-                if email:
-                    st.write(f"**Email:** {email}")
-                else:
-                    st.write("**Email:** Not found")
-                
-                st.write(f"**Clinic Size:** {clinic_data.get('clinic_size', 'N/A')}")
-                st.write(f"**Provider Count:** ~{clinic_data.get('provider_count', 'N/A')}")
-                st.write(f"**Billing Prediction:** {clinic_data.get('billing_prediction', 'N/A')}")
-                st.write(f"**Billing Score:** {clinic_data.get('billing_score', 'N/A')}")
-                
-                billing_reason = clinic_data.get('billing_reason', '')
-                if billing_reason:
-                    st.info(f"💡 **Why:** {billing_reason}")
+                size_options = ["All"] + sorted(df_clinics["clinic_size"].unique().tolist())
+                selected_size = st.selectbox("Clinic Size", options=size_options, index=0)
+            
+            with col3:
+                billing_options = ["All", "High", "Medium", "Low"]
+                selected_billing = st.selectbox("Billing Need", options=billing_options, index=0)
+            
+            with col4:
+                has_website = st.checkbox("Has Website")
+                has_email = st.checkbox("Has Email")
+            
+            # Search
+            search_term = st.text_input("🔎 Search clinic name", "")
+            
+            # Apply filters
+            filtered = df_clinics.copy()
+            
+            if selected_cities:
+                filtered = filtered[filtered["city"].isin(selected_cities)]
+            if selected_size != "All":
+                filtered = filtered[filtered["clinic_size"] == selected_size]
+            if selected_billing != "All":
+                filtered = filtered[filtered["billing_prediction"] == selected_billing]
+            if has_website:
+                filtered = filtered[filtered["website"].str.len() > 0]
+            if has_email:
+                filtered = filtered[filtered["email"].str.len() > 0]
+            if search_term:
+                filtered = filtered[filtered["clinic_name"].str.contains(search_term, case=False, na=False)]
+            
+            # Summary
+            st.subheader("📊 Summary")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("Total Clinics", len(df_clinics))
+            with col2:
+                st.metric("Filtered Results", len(filtered))
+            with col3:
+                high_priority = (df_clinics["billing_prediction"] == "High").sum()
+                st.metric("High Priority", high_priority)
+            with col4:
+                with_contact = (df_clinics["email"].str.len() > 0).sum()
+                st.metric("With Email", with_contact)
+            
+            # Data table
+            st.subheader("🗂️ Clinic List")
+            
+            display_cols = ["clinic_name", "city", "practice_type", "phone", "website", 
+                           "email", "clinic_size", "billing_prediction"]
+            display_cols = [c for c in display_cols if c in filtered.columns]
+            
+            st.dataframe(
+                filtered[display_cols],
+                use_container_width=True,
+                height=500,
+                hide_index=True
+            )
+            
+            # Download
+            csv = filtered.to_csv(index=False)
+            st.download_button(
+                label="⬇️ Download Filtered Data",
+                data=csv,
+                file_name=f"clinics_filtered_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
+    
+    # ==================== DOCTORS TAB ====================
+    with tab2:
+        df_doctors = load_data(CSV_DOCTORS)
+        
+        if df_doctors is None or df_doctors.empty:
+            st.warning("⚠️ No doctor data found. Click 'Refresh Doctors' to fetch data.")
+            st.info("👉 Use the sidebar to refresh data from NPI Registry")
+        else:
+            # Filters
+            st.subheader("🔍 Filters")
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                all_cities_doc = sorted(df_doctors["city"].dropna().unique().tolist())
+                selected_cities_doc = st.multiselect("City", options=all_cities_doc, default=[], key="doc_city")
+            
+            with col2:
+                all_specialties = sorted(df_doctors["specialty"].dropna().unique().tolist())
+                selected_specialty = st.multiselect("Specialty", options=all_specialties, default=[], key="specialty")
+            
+            with col3:
+                billing_options_doc = ["All", "High", "Medium", "Low"]
+                selected_billing_doc = st.selectbox("Billing Need", options=billing_options_doc, index=0, key="doc_billing")
+            
+            # Search
+            search_term_doc = st.text_input("🔎 Search doctor name", "", key="doc_search")
+            
+            # Apply filters
+            filtered_doc = df_doctors.copy()
+            
+            if selected_cities_doc:
+                filtered_doc = filtered_doc[filtered_doc["city"].isin(selected_cities_doc)]
+            if selected_specialty:
+                filtered_doc = filtered_doc[filtered_doc["specialty"].isin(selected_specialty)]
+            if selected_billing_doc != "All":
+                filtered_doc = filtered_doc[filtered_doc["billing_prediction"] == selected_billing_doc]
+            if search_term_doc:
+                filtered_doc = filtered_doc[filtered_doc["doctor_name"].str.contains(search_term_doc, case=False, na=False)]
+            
+            # Summary
+            st.subheader("📊 Summary")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("Total Doctors", len(df_doctors))
+            with col2:
+                st.metric("Filtered Results", len(filtered_doc))
+            with col3:
+                high_priority_doc = (df_doctors["billing_prediction"] == "High").sum()
+                st.metric("High Priority", high_priority_doc)
+            with col4:
+                specialties_count = df_doctors["specialty"].nunique()
+                st.metric("Specialties", specialties_count)
+            
+            # Data table
+            st.subheader("🗂️ Doctor List")
+            
+            display_cols_doc = ["doctor_name", "credentials", "specialty", "city", 
+                               "phone", "practice_type", "billing_prediction"]
+            display_cols_doc = [c for c in display_cols_doc if c in filtered_doc.columns]
+            
+            st.dataframe(
+                filtered_doc[display_cols_doc],
+                use_container_width=True,
+                height=500,
+                hide_index=True
+            )
+            
+            # Download
+            csv_doc = filtered_doc.to_csv(index=False)
+            st.download_button(
+                label="⬇️ Download Filtered Data",
+                data=csv_doc,
+                file_name=f"doctors_filtered_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                key="download_doctors"
+            )
 
 
 if __name__ == "__main__":

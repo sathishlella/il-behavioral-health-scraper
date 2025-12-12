@@ -17,19 +17,6 @@ Your project is ready for deployment! I've:
 1. Go to **[github.com](https://github.com)** and sign in (or create account)
 2. Click the **"+"** icon (top right) → "New repository"
 3. Repository settings:
-   - **Name:** `il-behavioral-health-scraper`
-   - **Description:** "Automated scraper for IL behavioral health clinics"
-   - **Visibility:** 
-     - ✅ **Private** (recommended if data is sensitive)
-     - Or **Public** (if you want to showcase it)
-   - **DO NOT** check "Initialize with README" (we have one)
-4. Click **"Create repository"**
-
-### Step 2: Push to GitHub
-
-GitHub will show connection commands. Copy and run them:
-
-```bash
 cd "d:\Student Assignments\student_protfolios\Medexa_healthCare\Tools\Velden Scraper"
 
 # Connect to GitHub (replace YOUR_USERNAME and REPO_NAME)
