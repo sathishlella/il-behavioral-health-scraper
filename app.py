@@ -9,11 +9,21 @@ import os
 CSV_CLINICS = "il_behavioral_health_clinics.csv"
 CSV_DOCTORS = "il_behavioral_health_doctors.csv"
 
+# Login credentials
+USERNAME = "Admin"
+PASSWORD = "Admin123"
+
 st.set_page_config(
     page_title="Velden – IL Behavioral Health Pipeline",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Initialize session state for login
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+if 'login_attempts' not in st.session_state:
+    st.session_state.login_attempts = 0
 
 @st.cache_data
 def load_data(path: str) -> pd.DataFrame:
@@ -77,7 +87,57 @@ def run_scraper(script_name: str, description: str):
         return False
 
 
+def login_page():
+    """Display login page."""
+    # Center the login form
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        st.markdown("# 🏥 Velden Health")
+        st.markdown("### Illinois Behavioral Health Pipeline")
+        st.markdown("---")
+        
+        # Login form
+        with st.form("login_form"):
+            st.markdown("#### 🔐 Login")
+            username = st.text_input("Username", placeholder="Enter username")
+            password = st.text_input("Password", type="password", placeholder="Enter password")
+            submit = st.form_submit_button("Login", use_container_width=True)
+            
+            if submit:
+                if username == USERNAME and password == PASSWORD:
+                    st.session_state.logged_in = True
+                    st.session_state.login_attempts = 0
+                    st.success("✅ Login successful!")
+                    st.rerun()
+                else:
+                    st.session_state.login_attempts += 1
+                    st.error(f"❌ Invalid credentials. Attempt {st.session_state.login_attempts}/3")
+                    
+                    if st.session_state.login_attempts >= 3:
+                        st.warning("⚠️ Too many failed attempts. Please refresh the page.")
+        
+        # Help text
+        st.markdown("---")
+        st.caption("🔒 Secure access to clinic pipeline data")
+        st.caption("Contact administrator if you've forgotten credentials")
+
+
 def main():
+    # Check if user is logged in
+    if not st.session_state.logged_in:
+        login_page()
+        return
+    
+    # Logout button in sidebar
+    with st.sidebar:
+        st.markdown("---")
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state.logged_in = False
+            st.rerun()
+        st.markdown("---")
+    
     st.title("🏥 Velden Health – Illinois Behavioral Health Pipeline")
     
     # Sidebar - Data Management
