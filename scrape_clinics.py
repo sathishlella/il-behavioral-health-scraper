@@ -201,10 +201,10 @@ def extract_clinic(result, state):
     size = determine_size(org_name)
     billing = predict_billing(org_name, practice_type, size)
     
-    # Infer website/email
-    clean_n = clean_url(org_name)
-    website = f"www.{clean_n}.com" if clean_n else ""
-    email = f"contact@{clean_n}.com" if clean_n else ""
+    # Don't infer website/email - they're usually wrong!
+    # Leave blank - use enrich_contacts.py to get REAL contacts from websites
+    website = ""
+    email = ""
     
     # Format phone
     phone = addr.get("telephone_number", "")
