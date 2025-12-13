@@ -5,6 +5,7 @@ import subprocess
 import sys
 from datetime import datetime
 import os
+import time
 from outreach_tracker import (
     get_status, update_status, get_pipeline_summary, 
     VALID_STATUSES, add_note
@@ -192,14 +193,34 @@ def main():
         )
         
         if st.button("🌐 Find Websites & Emails", use_container_width=True):
-            with st.spinner(f"Finding websites for {num_to_enrich} clinics... This may take {num_to_enrich * 3 // 60} minutes"):
-                try:
-                    success = run_scraper(f"enrich_contacts.py {CSV_CLINICS} {num_to_enrich}", "Contact enrichment")
-                    if success:
-                        st.success(f"✅ Enriched {num_to_enrich} clinics!")
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
+            progress_placeholder = st.empty()
+            status_placeholder = st.empty()
+            
+            progress_placeholder.progress(0)
+            status_placeholder.info(f"🔍 Finding websites for {num_to_enrich} clinics... This may take {num_to_enrich * 3 // 60} minutes")
+            
+            try:
+                # Run enrichment script with arguments
+                result = subprocess.run(
+                    [sys.executable, "enrich_contacts.py", CSV_CLINICS, str(num_to_enrich)],
+                    capture_output=True,
+                    text=True,
+                    timeout=num_to_enrich * 5  # 5 seconds per clinic max
+                )
+                
+                progress_placeholder.progress(100)
+                
+                if result.returncode == 0:
+                    status_placeholder.success(f"✅ Successfully enriched {num_to_enrich} clinics!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    status_placeholder.error(f"❌ Enrichment failed: {result.stderr[:200]}")
+                    
+            except subprocess.TimeoutExpired:
+                status_placeholder.warning(f"⏱️ Enrichment taking longer than expected. Check CSV for progress.")
+            except Exception as e:
+                status_placeholder.error(f"❌ Error: {str(e)[:200]}")
         
         st.markdown("---")
         
