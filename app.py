@@ -178,6 +178,31 @@ def main():
         
         st.markdown("---")
         
+        # Contact Enrichment
+        st.markdown("### 🔍 Find Real Contacts")
+        st.caption("Google search for websites & emails")
+        
+        num_to_enrich = st.number_input(
+            "Number of clinics to enrich:",
+            min_value=1,
+            max_value=305,
+            value=10,
+            step=10,
+            help="Start with 10 to test, then do more"
+        )
+        
+        if st.button("🌐 Find Websites & Emails", use_container_width=True):
+            with st.spinner(f"Finding websites for {num_to_enrich} clinics... This may take {num_to_enrich * 3 // 60} minutes"):
+                try:
+                    success = run_scraper(f"enrich_contacts.py {CSV_CLINICS} {num_to_enrich}", "Contact enrichment")
+                    if success:
+                        st.success(f"✅ Enriched {num_to_enrich} clinics!")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
+        
+        st.markdown("---")
+        
         # Data file info
         st.markdown("### 📁 Current Data")
         
