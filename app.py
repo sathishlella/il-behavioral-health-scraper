@@ -9,6 +9,7 @@ from outreach_tracker import (
     get_status, update_status, get_pipeline_summary, 
     VALID_STATUSES, add_note
 )
+from contact_validator import validate_contact, get_status_icon
 
 CSV_CLINICS = "il_behavioral_health_clinics.csv"
 CSV_DOCTORS = "il_behavioral_health_doctors.csv"
@@ -334,9 +335,40 @@ def main():
                 display_df['outreach_status'] = display_df['npi'].apply(
                     lambda npi: get_status(npi)['status'] if get_status(npi) else "Not Contacted"
                 )
+                # Add notes column
+                display_df['notes'] = display_df['npi'].apply(
+                    lambda npi: get_status(npi)['notes'] if get_status(npi) and get_status(npi).get('notes') else ""
+                )
+            
+            # Add validation status for website and email
+            if 'website' in display_df.columns and 'email' in display_df.columns:
+                @st.cache_data(ttl=3600)  # Cache for 1 hour
+                def get_validation_status(website, email):
+                    """Get validation status with caching."""
+                    try:
+                        result = validate_contact(website, email)
+                        web_icon = get_status_icon(result['website_status'])
+                        email_icon = get_status_icon(result['email_status'])
+                        return web_icon, email_icon
+                    except:
+                        return "❓", "❓"
+                
+                # Add validation columns
+                validation_results = display_df.apply(
+                    lambda row: get_validation_status(row.get('website', ''), row.get('email', '')),
+                    axis=1
+                )
+                display_df['web_check'] = validation_results.apply(lambda x: x[0])
+                display_df['email_check'] = validation_results.apply(lambda x: x[1])
             
             # Select columns to display
             display_cols = ["clinic_name", "practice_type", "city", "state", "phone"]
+            
+            # Add validation columns
+            if 'web_check' in display_df.columns:
+                display_cols.append("web_check")
+            if 'email_check' in display_df.columns:
+                display_cols.append("email_check")
             
             # Add revenue columns if they exist
             if "est_monthly_revenue" in display_df.columns:
@@ -349,6 +381,8 @@ def main():
             
             if 'outreach_status' in display_df.columns:
                 display_cols.append("outreach_status")
+            if 'notes' in display_df.columns:
+                display_cols.append("notes")
             
             # Keep only available columns
             display_cols = [c for c in display_cols if c in display_df.columns]
@@ -373,9 +407,12 @@ def main():
                     "practice_type": st.column_config.TextColumn("Practice Type", width="medium"),
                     "city": st.column_config.TextColumn("City", width="medium"),
                     "state": st.column_config.TextColumn("State", width="small"),
+                    "web_check": st.column_config.TextColumn("🌐 Web", width="small"),
+                    "email_check": st.column_config.TextColumn("📧 Email", width="small"),
                     "est_monthly_revenue": st.column_config.TextColumn("Monthly RCM", width="small"),
                     "est_annual_value": st.column_config.TextColumn("Annual Value", width="small"),
                     "outreach_status": st.column_config.TextColumn("Status", width="medium"),
+                    "notes": st.column_config.TextColumn("Notes", width="large"),
                 }
             )
             
@@ -485,16 +522,79 @@ def main():
             # Data table
             st.subheader("🗂️ Doctor List")
             
+            # Add status and notes columns
+            if 'npi' in filtered_doc.columns:
+                filtered_doc['outreach_status'] = filtered_doc['npi'].apply(
+                    lambda npi: get_status(npi)['status'] if get_status(npi) else "Not Contacted"
+                )
+                filtered_doc['notes'] = filtered_doc['npi'].apply(
+                    lambda npi: get_status(npi)['notes'] if get_status(npi) and get_status(npi).get('notes') else ""
+                )
+            
             display_cols_doc = ["doctor_name", "credentials", "specialty", "city", 
                                "phone", "practice_type", "billing_prediction"]
+            
+            # Add status and notes if available
+            if 'outreach_status' in filtered_doc.columns:
+                display_cols_doc.append("outreach_status")
+            if 'notes' in filtered_doc.columns:
+                display_cols_doc.append("notes")
+                
             display_cols_doc = [c for c in display_cols_doc if c in filtered_doc.columns]
             
             st.dataframe(
                 filtered_doc[display_cols_doc],
                 use_container_width=True,
                 height=500,
-                hide_index=True
+                hide_index=True,
+                column_config={
+                    "doctor_name": st.column_config.TextColumn("Doctor Name", width="large"),
+                    "credentials": st.column_config.TextColumn("Credentials", width="small"),
+                    "specialty": st.column_config.TextColumn("Specialty", width="medium"),
+                    "outreach_status": st.column_config.TextColumn("Status", width="medium"),
+                    "notes": st.column_config.TextColumn("Notes", width="large"),
+                }
             )
+            
+            # Status Update Section for Doctors
+            st.markdown("### 📝 Update Outreach Status")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                selected_doc_npi = st.selectbox(
+                    "Select Doctor (by NPI)",
+                    options=filtered_doc['npi'].tolist() if 'npi' in filtered_doc.columns else [],
+                    format_func=lambda npi: f"{filtered_doc[filtered_doc['npi']==npi]['doctor_name'].iloc[0][:30]}..." if npi else "",
+                    key="doc_npi_select"
+                )
+            
+            with col2:
+                new_status_doc = st.selectbox("New Status", options=VALID_STATUSES, key="doc_status")
+            
+            with col3:
+                contact_date_doc = st.date_input("Contact Date", value=datetime.now(), key="doc_date")
+            
+            with col4:
+                if st.button("Update Status", type="primary", key="doc_update"):
+                    if selected_doc_npi:
+                        success = update_status(
+                            selected_doc_npi,
+                            new_status_doc,
+                            f"Updated via dashboard on {datetime.now().strftime('%Y-%m-%d')}",
+                            contact_date_doc.strftime("%Y-%m-%d")
+                        )
+                        if success:
+                            st.success(f"✅ Updated to: {new_status_doc}")
+                            st.rerun()
+                        else:
+                            st.error("Failed to update")
+            
+            # Notes section for doctors
+            notes_input_doc = st.text_area("Add Notes (optional)", placeholder="e.g., Called Dr. Smith, interested in proposal...", key="doc_notes")
+            if st.button("Add Note", key="doc_add_note") and selected_doc_npi and notes_input_doc:
+                if add_note(selected_doc_npi, notes_input_doc):
+                    st.success("✅ Note added")
+                    st.rerun()
             
             # Download
             csv_doc = filtered_doc.to_csv(index=False)
