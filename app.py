@@ -364,6 +364,12 @@ def main():
             # Select columns to display
             display_cols = ["clinic_name", "practice_type", "city", "state", "phone"]
             
+            # Add website and email
+            if 'website' in display_df.columns:
+                display_cols.append("website")
+            if 'email' in display_df.columns:
+                display_cols.append("email")
+            
             # Add validation columns
             if 'web_check' in display_df.columns:
                 display_cols.append("web_check")
@@ -407,6 +413,9 @@ def main():
                     "practice_type": st.column_config.TextColumn("Practice Type", width="medium"),
                     "city": st.column_config.TextColumn("City", width="medium"),
                     "state": st.column_config.TextColumn("State", width="small"),
+                    "phone": st.column_config.TextColumn("Phone", width="medium"),
+                    "website": st.column_config.TextColumn("Website", width="medium"),
+                    "email": st.column_config.TextColumn("Email", width="medium"),
                     "web_check": st.column_config.TextColumn("🌐 Web", width="small"),
                     "email_check": st.column_config.TextColumn("📧 Email", width="small"),
                     "est_monthly_revenue": st.column_config.TextColumn("Monthly RCM", width="small"),
